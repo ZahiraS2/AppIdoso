@@ -12,10 +12,15 @@ export default function SignUpScreen({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   // Ao criar a conta, o usuário já entra (a navegação troca para a Home)
-  const submit = () => {
-    const err = signUp({ name, email, password });
+  const submit = async () => {
+    if (busy) return;
+    setError('');
+    setBusy(true);
+    const err = await signUp({ name, email, password });
+    setBusy(false);
     if (err) setError(err);
   };
 
@@ -34,7 +39,7 @@ export default function SignUpScreen({ navigation }) {
           <Field label="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoComplete="email" placeholder="voce@email.com" />
           <Field label="Senha (mínimo 6 caracteres)" value={password} onChangeText={setPassword} secureTextEntry placeholder="Crie uma senha" onSubmitEditing={submit} />
           <ErrorText>{error}</ErrorText>
-          <Button title="Criar conta" onPress={submit} />
+          <Button title={busy ? 'Criando…' : 'Criar conta'} onPress={submit} />
           <Pressable onPress={() => navigation.goBack()} accessibilityRole="button" style={{ padding: 16, alignItems: 'center' }}>
             <Text style={{ color: t.primary, fontFamily: fonts.bold, fontSize: 15 }}>Já tenho conta · Entrar</Text>
           </Pressable>

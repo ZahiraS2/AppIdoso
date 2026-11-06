@@ -1,164 +1,256 @@
-import React, { createContext, useContext, useMemo, useState } from 'react';
+import React, {
+  createContext, useCallback, useContext, useEffect, useMemo, useState,
+} from 'react';
+import { AppState } from 'react-native';
+import { supabase } from '../lib/supabase';
+import { cancelAllReminders, scheduleMedicineReminders } from '../lib/notifications';
 import {
-  addDaysISO, isValidEmail, nameFromEmail, normEmail, nowHM, todayISO,
+  isValidEmail, nameFromEmail, normEmail, nowHM, todayISO,
 } from '../utils/format';
 
 const Ctx = createContext(null);
 export const useApp = () => useContext(Ctx);
 
-const DEMO = { name: 'Ana Souza', email: 'demo@cuidar.com', password: '123456' };
-const today = todayISO();
+const hm = (t) => (t ? String(t).slice(0, 5) : ''); // '08:00:00' -> '08:00'
 
-const seedElders = () => [
-  {
-    id: 'e1',
-    name: 'Maria Aparecida',
-    age: 78,
-    conditions: ['Diabetes', 'Pressão alta'],
-    guardians: [
-      { name: 'Ana Souza', email: DEMO.email },
-      { name: 'Carlos Souza', email: 'carlos@email.com' },
-    ],
-    medicines: [
-      {
-        id: 'm1', name: 'Metformina', dose: '850 mg', time: '08:00',
-        history: [
-          { date: addDaysISO(-2), time: '08:10' },
-          { date: today, time: '08:05' },
-        ],
-      },
-      {
-        id: 'm2', name: 'Losartana', dose: '50 mg', time: '12:00',
-        history: [{ date: addDaysISO(-1), time: '12:20' }],
-      },
-      {
-        id: 'm3', name: 'Insulina NPH', dose: '10 UI', time: '20:00',
-        history: [{ date: addDaysISO(-1), time: '20:05' }],
-      },
-    ],
-    appointments: [
-      { id: 'c1', doctor: 'Dra. Helena Prado', specialty: 'Endocrinologia', date: addDaysISO(3), notes: 'Levar exames de glicemia' },
-      { id: 'c2', doctor: 'Dr. Paulo Mota', specialty: 'Cardiologia', date: addDaysISO(-40), notes: 'Pressão controlada' },
-    ],
-  },
-  {
-    id: 'e2',
-    name: 'José Almeida',
-    age: 84,
-    conditions: ['Pressão baixa', 'Alzheimer'],
-    guardians: [
-      { name: 'Ana Souza', email: DEMO.email },
-      { name: 'Beatriz Almeida', email: 'bia@email.com' },
-    ],
-    medicines: [{ id: 'm4', name: 'Donepezila', dose: '10 mg', time: '21:00', history: [] }],
-    appointments: [
-      { id: 'c3', doctor: 'Dr. Renato Lima', specialty: 'Neurologia', date: addDaysISO(12), notes: '' },
-    ],
-  },
-];
+// Converte a linha do banco para o formato que as telas já usam
+const mapElder = (row) => ({
+  id: row.id,
+  name: row.name,
+  age: row.age,
+  conditions: row.conditions || [],
+  guardians: (row.guardians || []).map((g) => ({
+    email: g.email,
+    name: g.profiles?.name || nameFromEmail(g.email),
+  })),
+  medicines: (row.medicines || []).map((m) => ({
+    id: m.id,
+    name: m.name,
+    dose: m.dose || '',
+    time: hm(m.time),
+    history: (m.medicine_logs || []).map((l) => ({ date: l.taken_on, time: hm(l.taken_at) })),
+  })),
+  appointments: (row.appointments || []).map((c) => ({
+    id: c.id,
+    doctor: c.doctor,
+    specialty: c.specialty || '',
+    date: c.date,
+    notes: c.notes || '',
+  })),
+});
 
-const uid = (p) => `${p}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+const toUser = (session) => {
+  const u = session?.user;
+  if (!u) return null;
+  return {
+    id: u.id,
+    email: normEmail(u.email || ''),
+    name: u.user_metadata?.name || nameFromEmail(u.email || ''),
+  };
+};
 
 export function AppProvider({ children }) {
-  const [users, setUsers] = useState([DEMO]);
-  const [user, setUser] = useState(null); // usuário logado
-  const [elders, setElders] = useState(seedElders);
+  const [ready, setReady] = useState(false); // sessão já foi restaurada?
+  const [user, setUser] = useState(null);    // usuário logado
+  const [elders, setElders] = useState([]);
+
+  // ---------- Sessão (mantém o login depois de recarregar) ----------
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => {
+      setUser(toUser(data.session));
+      setReady(true);
+    });
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
+      setUser(toUser(session));
+    });
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // ---------- Carregar dados do banco ----------
+  const loadElders = useCallback(async () => {
+    const { data, error } = await supabase
+      .from('elders')
+      .select(`
+        id, name, age, conditions,
+        guardians ( email, profiles ( name ) ),
+        medicines ( id, name, dose, time, medicine_logs ( taken_on, taken_at ) ),
+        appointments ( id, doctor, specialty, date, notes )
+      `)
+      .order('created_at', { ascending: true });
+    if (error) {
+      console.warn('Erro ao carregar idosos:', error.message);
+      return;
+    }
+    setElders((data || []).map(mapElder));
+  }, []);
+
+  useEffect(() => {
+    if (user?.id) loadElders();
+    else setElders([]);
+  }, [user?.id, loadElders]);
+
+  // Atualiza ao voltar para o app (outros responsáveis podem ter feito alterações)
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active' && user?.id) loadElders();
+    });
+    return () => sub.remove();
+  }, [user?.id, loadElders]);
+
+  // ---------- Lembretes de remédios (notificações no aparelho) ----------
+  // A assinatura só muda quando um remédio é criado/alterado, evitando reagendar à toa
+  const remindersKey = useMemo(
+    () => elders
+      .flatMap((e) => e.medicines.map((m) => `${e.id}|${e.name}|${m.id}|${m.name}|${m.dose}|${m.time}`))
+      .sort()
+      .join(';'),
+    [elders],
+  );
+
+  useEffect(() => {
+    if (!user?.id) {
+      cancelAllReminders(); // saiu da conta: remove os avisos deste aparelho
+      return;
+    }
+    scheduleMedicineReminders(elders);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user?.id, remindersKey]);
 
   // ---------- Autenticação ----------
-  const signUp = ({ name, email, password }) => {
+  const signUp = async ({ name, email, password }) => {
     const mail = normEmail(email);
     if (!name.trim()) return 'Informe seu nome.';
     if (!isValidEmail(mail)) return 'Informe um e-mail válido.';
     if (password.length < 6) return 'A senha deve ter pelo menos 6 caracteres.';
-    if (users.some((u) => u.email === mail)) return 'Já existe uma conta com este e-mail.';
-    const novo = { name: name.trim(), email: mail, password };
-    setUsers((prev) => [...prev, novo]);
-    setUser(novo);
-    return null;
+
+    const { data, error } = await supabase.auth.signUp({
+      email: mail,
+      password,
+      options: { data: { name: name.trim() } },
+    });
+    if (error) {
+      if (/already registered/i.test(error.message)) return 'Já existe uma conta com este e-mail.';
+      return `Não foi possível criar a conta: ${error.message}`;
+    }
+    // E-mail já cadastrado (quando a confirmação por e-mail está ligada)
+    if (data.user && data.user.identities && data.user.identities.length === 0) {
+      return 'Já existe uma conta com este e-mail.';
+    }
+    // Sem sessão = o Supabase está exigindo confirmação por e-mail
+    if (!data.session) return 'Conta criada! Confirme seu e-mail para poder entrar.';
+    return null; // sessão aberta: onAuthStateChange leva para a Home
   };
 
-  const signIn = (email, password) => {
-    const found = users.find((u) => u.email === normEmail(email) && u.password === password);
-    if (!found) return 'E-mail ou senha incorretos.';
-    setUser(found);
-    return null;
+  const signIn = async (email, password) => {
+    const { error } = await supabase.auth.signInWithPassword({
+      email: normEmail(email),
+      password,
+    });
+    if (!error) return null;
+    if (/invalid login credentials/i.test(error.message)) return 'E-mail ou senha incorretos.';
+    if (/not confirmed/i.test(error.message)) return 'Confirme seu e-mail antes de entrar.';
+    return `Não foi possível entrar: ${error.message}`;
   };
 
-  const signOut = () => setUser(null);
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setElders([]);
+  };
 
   // ---------- Idosos ----------
-  const myElders = useMemo(
-    () => (user ? elders.filter((e) => e.guardians.some((g) => g.email === user.email)) : []),
-    [elders, user],
-  );
-
-  const addElder = ({ name, age, conditions, partnerEmail }) => {
+  const addElder = async ({ name, age, conditions, partnerEmail }) => {
     const ageNum = Number(age);
     if (!name.trim() || !ageNum || ageNum < 0) return 'Informe nome completo e idade.';
     const partner = normEmail(partnerEmail || '');
     if (partner && !isValidEmail(partner)) return 'O e-mail do responsável é inválido.';
-    const guardians = [{ name: user.name, email: user.email }];
-    if (partner && partner !== user.email) guardians.push({ name: nameFromEmail(partner), email: partner });
-    setElders((prev) => [
-      ...prev,
-      { id: uid('e'), name: name.trim(), age: ageNum, conditions, guardians, medicines: [], appointments: [] },
-    ]);
+
+    // O banco já adiciona quem cadastra como primeiro responsável (gatilho)
+    const { data, error } = await supabase
+      .from('elders')
+      .insert({ name: name.trim(), age: ageNum, conditions })
+      .select('id')
+      .single();
+    if (error) return `Não foi possível salvar o idoso: ${error.message}`;
+
+    if (partner && partner !== user.email) {
+      const { error: gErr } = await supabase
+        .from('guardians')
+        .insert({ elder_id: data.id, email: partner });
+      if (gErr) {
+        await loadElders();
+        return `Idoso salvo, mas não foi possível adicionar o responsável: ${gErr.message}`;
+      }
+    }
+    await loadElders();
     return null;
   };
 
-  const patchElder = (id, fn) =>
-    setElders((prev) => prev.map((e) => (e.id === id ? fn(e) : e)));
-
-  const addGuardian = (elderId, email) => {
+  const addGuardian = async (elderId, email) => {
     const mail = normEmail(email);
     if (!mail) return 'Informe o e-mail do responsável.';
     if (!isValidEmail(mail)) return 'E-mail inválido.';
     const elder = elders.find((e) => e.id === elderId);
-    if (elder.guardians.some((g) => g.email === mail)) return 'Esta pessoa já é responsável.';
-    const known = users.find((u) => u.email === mail);
-    patchElder(elderId, (e) => ({
-      ...e,
-      guardians: [...e.guardians, { name: known ? known.name : nameFromEmail(mail), email: mail }],
-    }));
+    if (elder?.guardians.some((g) => g.email === mail)) return 'Esta pessoa já é responsável.';
+
+    const { error } = await supabase.from('guardians').insert({ elder_id: elderId, email: mail });
+    if (error) {
+      if (error.code === '23505') return 'Esta pessoa já é responsável.';
+      return `Não foi possível adicionar: ${error.message}`;
+    }
+    await loadElders();
     return null;
   };
 
   // ---------- Remédios ----------
-  const addMedicine = (elderId, { name, dose, time }) => {
-    patchElder(elderId, (e) => ({
-      ...e,
-      medicines: [...e.medicines, { id: uid('m'), name: name.trim(), dose: dose.trim(), time, history: [] }],
-    }));
+  const addMedicine = async (elderId, { name, dose, time }) => {
+    const { error } = await supabase.from('medicines').insert({
+      elder_id: elderId,
+      name: name.trim(),
+      dose: dose.trim(),
+      time,
+    });
+    if (error) return `Não foi possível salvar o remédio: ${error.message}`;
+    await loadElders();
+    return null;
   };
 
   // Registra a hora atual; não pode ser desfeito
-  const markTaken = (elderId, medId) => {
-    patchElder(elderId, (e) => ({
-      ...e,
-      medicines: e.medicines.map((m) =>
-        m.id === medId && !m.history.some((h) => h.date === todayISO())
-          ? { ...m, history: [...m.history, { date: todayISO(), time: nowHM() }] }
-          : m,
-      ),
-    }));
+  const markTaken = async (elderId, medId) => {
+    const { error } = await supabase.from('medicine_logs').insert({
+      medicine_id: medId,
+      taken_on: todayISO(),
+      taken_at: nowHM(),
+    });
+    // 23505 = já foi marcado hoje (outro responsável pode ter marcado antes)
+    if (error && error.code !== '23505') {
+      console.warn('Erro ao marcar como tomado:', error.message);
+      return 'Não foi possível registrar a dose.';
+    }
+    await loadElders();
+    return null;
   };
 
   // ---------- Consultas ----------
-  const addAppointment = (elderId, { doctor, specialty, date, notes }) => {
-    patchElder(elderId, (e) => ({
-      ...e,
-      appointments: [
-        ...e.appointments,
-        { id: uid('c'), doctor: doctor.trim(), specialty: specialty.trim(), date, notes: notes.trim() },
-      ],
-    }));
+  const addAppointment = async (elderId, { doctor, specialty, date, notes }) => {
+    const { error } = await supabase.from('appointments').insert({
+      elder_id: elderId,
+      doctor: doctor.trim(),
+      specialty: specialty.trim(),
+      date,
+      notes: notes.trim(),
+    });
+    if (error) return `Não foi possível salvar a consulta: ${error.message}`;
+    await loadElders();
+    return null;
   };
 
-  // Nome do responsável: usa o cadastro do usuário, se existir
-  const guardianName = (g) => users.find((u) => u.email === g.email)?.name || g.name;
+  // O nome já vem resolvido do banco (perfil do responsável)
+  const guardianName = (g) => g.name;
+
+  const myElders = useMemo(() => elders, [elders]); // o RLS já filtra por responsável
 
   const value = {
-    user, signUp, signIn, signOut,
+    ready, user, signUp, signIn, signOut,
     myElders, elders, addElder, addGuardian,
     addMedicine, markTaken, addAppointment, guardianName,
   };

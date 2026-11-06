@@ -11,9 +11,14 @@ export default function LoginScreen({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
-  const submit = () => {
-    const err = signIn(email, password);
+  const submit = async () => {
+    if (busy) return;
+    setError('');
+    setBusy(true);
+    const err = await signIn(email, password);
+    setBusy(false);
     if (err) setError(err);
   };
 
@@ -34,13 +39,10 @@ export default function LoginScreen({ navigation }) {
           <Field label="E-mail" value={email} onChangeText={setEmail} keyboardType="email-address" autoCapitalize="none" autoComplete="email" placeholder="voce@email.com" />
           <Field label="Senha" value={password} onChangeText={setPassword} secureTextEntry autoComplete="password" placeholder="Sua senha" onSubmitEditing={submit} />
           <ErrorText>{error}</ErrorText>
-          <Button title="Entrar" onPress={submit} />
+          <Button title={busy ? 'Entrando…' : 'Entrar'} onPress={submit} />
           <Pressable onPress={() => navigation.navigate('SignUp')} accessibilityRole="button" style={{ padding: 16, alignItems: 'center' }}>
             <Text style={{ color: t.primary, fontFamily: fonts.bold, fontSize: 15 }}>Não tem conta? Criar conta</Text>
           </Pressable>
-          <Text style={{ color: t.muted, fontFamily: fonts.regular, fontSize: 12, textAlign: 'center', marginTop: 8 }}>
-            Conta de teste: demo@cuidar.com · senha 123456
-          </Text>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>

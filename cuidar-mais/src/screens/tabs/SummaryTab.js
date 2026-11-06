@@ -25,8 +25,8 @@ export default function SummaryTab({ elder }) {
   const [email, setEmail] = useState('');
   const [error, setError] = useState('');
 
-  const save = () => {
-    const err = addGuardian(elder.id, email);
+  const save = async () => {
+    const err = await addGuardian(elder.id, email);
     if (err) return setError(err);
     setEmail(''); setError(''); setOpen(false);
   };

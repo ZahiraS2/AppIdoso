@@ -19,10 +19,19 @@ import ElderScreen from './src/screens/ElderScreen';
 const Stack = createNativeStackNavigator();
 
 function Routes() {
-  const { user } = useApp();
+  const { user, ready } = useApp();
   const t = useTheme();
   const base = useColorScheme() === 'light' ? DefaultTheme : DarkTheme;
   const navTheme = { ...base, colors: { ...base.colors, background: t.bg, card: t.bg, text: t.text, border: t.border, primary: t.primary } };
+
+  // Espera restaurar a sessão salva antes de decidir entre Login e Home
+  if (!ready) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: t.bg }}>
+        <ActivityIndicator color={t.primary} />
+      </View>
+    );
+  }
 
   return (
     <NavigationContainer theme={navTheme}>

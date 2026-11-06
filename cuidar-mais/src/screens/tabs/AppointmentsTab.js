@@ -37,11 +37,12 @@ export default function AppointmentsTab({ elder }) {
   const close = () => {
     setOpen(false); setError(''); setDoctor(''); setSpecialty(''); setDate(''); setNotes('');
   };
-  const save = () => {
+  const save = async () => {
     if (!doctor.trim()) return setError('Informe o nome do médico.');
     const iso = parseDateBR(date);
     if (!iso) return setError('Informe uma data válida (dd/mm/aaaa).');
-    addAppointment(elder.id, { doctor, specialty, date: iso, notes });
+    const err = await addAppointment(elder.id, { doctor, specialty, date: iso, notes });
+    if (err) return setError(err);
     close();
   };
 

@@ -15,10 +15,11 @@ export default function MedicinesTab({ elder }) {
   const [error, setError] = useState('');
 
   const close = () => { setOpen(false); setError(''); setName(''); setDose(''); setTime(''); };
-  const save = () => {
+  const save = async () => {
     if (!name.trim()) return setError('Informe o nome do remédio.');
     if (!isValidTime(time)) return setError('Informe o horário no formato HH:MM.');
-    addMedicine(elder.id, { name, dose, time });
+    const err = await addMedicine(elder.id, { name, dose, time });
+    if (err) return setError(err);
     close();
   };
 

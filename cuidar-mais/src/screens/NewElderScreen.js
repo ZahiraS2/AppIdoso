@@ -33,14 +33,19 @@ export default function NewElderScreen({ navigation }) {
   const [others, setOthers] = useState('');
   const [partner, setPartner] = useState('');
   const [error, setError] = useState('');
+  const [busy, setBusy] = useState(false);
 
   const toggle = (c) =>
     setSelected((prev) => (prev.includes(c) ? prev.filter((x) => x !== c) : [...prev, c]));
 
-  const submit = () => {
+  const submit = async () => {
+    if (busy) return;
     const extra = others.split(',').map((s) => s.trim()).filter(Boolean);
     const conditions = [...selected, ...extra.filter((x) => !selected.includes(x))];
-    const err = addElder({ name, age, conditions, partnerEmail: partner });
+    setError('');
+    setBusy(true);
+    const err = await addElder({ name, age, conditions, partnerEmail: partner });
+    setBusy(false);
     if (err) return setError(err);
     navigation.goBack();
   };
@@ -67,7 +72,7 @@ export default function NewElderScreen({ navigation }) {
           <Field label="Outras (separe por vírgula)" value={others} onChangeText={setOthers} placeholder="Ex.: Glaucoma, Artrite" />
           <Field label="E-mail de outro responsável (opcional)" value={partner} onChangeText={setPartner} keyboardType="email-address" autoCapitalize="none" />
           <ErrorText>{error}</ErrorText>
-          <Button title="Salvar idoso" onPress={submit} />
+          <Button title={busy ? 'Salvando…' : 'Salvar idoso'} onPress={submit} />
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
